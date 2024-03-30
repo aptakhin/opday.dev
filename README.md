@@ -15,9 +15,12 @@ curl https://get.acme.sh | sh -s email=...
 acme.sh --issue -d opday.dev -w /etc/nginx/cert
 ```
 
+## Deploy
+
 ```bash
+# From linux
 wget -O opday https://github.com/aptakhin/opday/releases/download/0.0.1/opday-x86_64-unknown-linux
 chmod +x opday
 
-opday build-push-deploy
+make deploy
 ```
