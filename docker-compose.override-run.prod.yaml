@@ -13,7 +13,14 @@ services:
       source: /etc/nginx/cert
       target: /etc/nginx/cert
       read_only: true
-
     ports:
     - "80:80"
     - "443:443"
+
+  backend:
+    image: registry.digitalocean.com/frlr/opday-dev/backend:$BACKEND_TAG
+    build: '!reset null'
+    command: opday-dev -p 3003
+    restart: unless-stopped
+    ports:
+    - 3003:3003

@@ -1,4 +1,4 @@
-opday
-opday-d*
+./opday
+./opday-d
 cargo
 target
