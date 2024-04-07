@@ -1,18 +1,24 @@
 use clap::Parser;
 
-use axum::{http::StatusCode, routing::get, Router};
+use axum::{
+    debug_handler,
+    extract::{Path, State},
+    http::StatusCode,
+    routing::{get, post},
+    Json, Router,
+};
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
+use db::insert_health_check;
+use model::HealthCheckModel;
 use std::net::SocketAddr;
+use std::str;
 use tokio_postgres::NoTls;
-
-#[allow(unused_imports)]
 use uuid::Uuid;
 
 pub mod db;
 pub mod model;
 
-#[allow(unused_imports)]
 use crate::db::{get_health_check_by_id, internal_error, ConnectionPool, DatabaseConnection};
 
 use log::debug;
@@ -33,11 +39,29 @@ struct Cli {
     port: u16,
 }
 
+#[debug_handler]
+async fn post_health_check(
+    State(pool): State<ConnectionPool>,
+    // DatabaseConnection(pool): DatabaseConnection,
+    Json(payload): Json<HealthCheckModel>,
+) -> Result<String, (StatusCode, String)> {
+    let conn = pool.get_owned().await.map_err(internal_error)?;
+
+    let id = insert_health_check(payload, conn).await;
+
+    let id_response = model::IdResponse {
+        success: true,
+        id: Some(id),
+        error: None,
+    };
+    Ok(serde_json::to_string(&id_response).unwrap())
+}
+
 async fn get_health_check(
+    Path(id): Path<Uuid>,
     DatabaseConnection(conn): DatabaseConnection,
 ) -> Result<String, (StatusCode, String)> {
-    let health_check = get_health_check_by_id(conn).await.unwrap();
-
+    let health_check = get_health_check_by_id(id, conn).await.unwrap();
     Ok(serde_json::to_string(&health_check).unwrap())
 }
 
@@ -47,30 +71,39 @@ async fn main() {
 
     env_logger::init();
 
-    let database_dsn =
-        std::env::var("DATABASE_DSN").expect("Failed to parse DATABASE_DSN environment variable");
-
     let addr = SocketAddr::from(([127, 0, 0, 1], cli.port));
 
     debug!("Listening on: {}", addr);
 
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    axum::serve(listener, app().await).await.unwrap();
+}
+
+async fn app() -> Router {
+    let database_dsn =
+        std::env::var("DATABASE_DSN").expect("Failed to parse DATABASE_DSN environment variable");
+
     let manager = PostgresConnectionManager::new_from_stringlike(&database_dsn, NoTls).unwrap();
     let pool = Pool::builder().build(manager).await.unwrap();
 
-    let app = Router::new()
+    Router::new()
         .route("/", get(root))
         .route("/api/v1/alive", get(root))
-        .route("/api/v1/health-check", get(get_health_check))
-        .with_state(pool);
-
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+        .route("/api/v1/health-check", post(post_health_check))
+        .route("/api/v1/health-check/:id", get(get_health_check))
+        .with_state(pool)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use http_body_util::BodyExt;
     use rstest::*;
+    use tower::ServiceExt;
 
     #[rstest(
         args,
@@ -80,58 +113,63 @@ mod tests {
         assert!(Cli::try_parse_from(args).is_ok());
     }
 
-    #[fixture]
-    async fn db() -> ConnectionPool {
-        let database_dsn = std::env::var("DATABASE_DSN")
-            .expect("Failed to parse DATABASE_DSN environment variable");
+    #[tokio::test]
+    async fn get_root() {
+        let app = app().await;
 
-        let manager = PostgresConnectionManager::new_from_stringlike(&database_dsn, NoTls).unwrap();
-        let pool = Pool::builder().build(manager).await.unwrap();
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
 
-        pool
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"ok");
     }
 
-    #[fixture]
-    async fn basic_health_check(#[future] db: ConnectionPool) -> Uuid {
-        let db_awaited = db.await;
-        let conn = db_awaited
-            .get_owned()
-            .await
-            .map_err(internal_error)
-            .expect("REASON");
-        let rows = conn
-            .query_one("INSERT INTO health_check
-            (organization_id, name, url, expected_status_code) VALUES ($1, $2, $3, $4) RETURNING (id)", &[&Uuid::new_v4(), &"test", &"http://...", &200])
-            .await.expect("REASON");
-        assert_eq!(rows.len(), 1);
-        let id_str: Uuid = rows.get(0);
-        id_str
-    }
+    #[tokio::test]
+    async fn get_alive() {
+        let app = app().await;
 
-    #[tokio::main]
-    #[rstest]
-    async fn test_query_health_check(
-        #[future] db: ConnectionPool,
-        #[future] basic_health_check: Uuid,
-    ) {
-        env_logger::init();
-
-        let db_awaited = db.await;
-        let conn = db_awaited
-            .get_owned()
-            .await
-            .map_err(internal_error)
-            .expect("REASON");
-        let health_check_id = basic_health_check.await;
-        let rows = conn
-            .query(
-                "SELECT * FROM health_check WHERE id=$1",
-                &[&health_check_id],
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/alive")
+                    .body(Body::empty())
+                    .unwrap(),
             )
             .await
             .unwrap();
-        assert_eq!(rows.len(), 1);
-        let value: &str = rows[0].try_get("name").expect("Failed");
-        debug!("Hellovalue {}", value);
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"ok");
+    }
+
+    #[tokio::test]
+    async fn post_health_check() {
+        let app = app().await;
+
+        let model = HealthCheckModel {
+            name: "test".to_string(),
+        };
+
+        let request = Request::post("/api/v1/health-check")
+            .header("Content-Type", "application/json")
+            .body(Body::from(serde_json::to_string(&model).unwrap()));
+
+        let response = app.oneshot(request.unwrap()).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        use serde_json::Value;
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let res = str::from_utf8(&body).unwrap();
+        let v: Value = serde_json::from_str(&res).unwrap();
+
+        assert_eq!(v["success"], true);
     }
 }
