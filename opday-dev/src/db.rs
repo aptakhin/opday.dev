@@ -8,7 +8,9 @@ use bb8_postgres::PostgresConnectionManager;
 use tokio_postgres::NoTls;
 use uuid::Uuid;
 
-use crate::model::{HealthCheckModel, InsertHealthCheckModelRequest};
+use crate::model::{
+    HealthCheckModel, HealthCheckModelUpdateRequest, InsertHealthCheckModelRequest,
+};
 
 pub type ConnectionPool = Pool<PostgresConnectionManager<NoTls>>;
 
@@ -48,7 +50,11 @@ pub async fn get_health_check_by_id(id: Uuid, conn: DbConn) -> Option<HealthChec
     })
 }
 
-pub async fn insert_health_check(model: InsertHealthCheckModelRequest, conn: DbConn) -> Uuid {
+pub async fn insert_health_check(
+    organization_id: Uuid,
+    model: InsertHealthCheckModelRequest,
+    conn: DbConn,
+) -> Uuid {
     let row = conn
         .query_one(
             "
@@ -57,7 +63,28 @@ pub async fn insert_health_check(model: InsertHealthCheckModelRequest, conn: DbC
             VALUES
                 ($1, $2, $3, $4)
             RETURNING (id)",
-            &[&Uuid::new_v4(), &model.name, &"http://...", &200],
+            &[&organization_id, &model.name, &model.url, &200],
+        )
+        .await
+        .expect("REASON");
+    row.get(0)
+}
+
+pub async fn update_health_check(
+    id: Uuid,
+    model: HealthCheckModelUpdateRequest,
+    conn: DbConn,
+) -> Uuid {
+    let row = conn
+        .query_one(
+            "
+            UPDATE health_check
+            SET
+                name = $2,
+                url = $3
+            WHERE id = $1
+            RETURNING id",
+            &[&id, &model.name, &model.url],
         )
         .await
         .expect("REASON");
@@ -95,6 +122,7 @@ pub mod tests {
     pub fn basic_health_check_model() -> InsertHealthCheckModelRequest {
         InsertHealthCheckModelRequest {
             name: "test".to_string(),
+            url: "http://localhost:8080".to_string(),
         }
     }
 
@@ -104,7 +132,8 @@ pub mod tests {
         #[future] conn: DbConn,
     ) -> Uuid {
         let conn_awaited = conn.await;
-        let id = insert_health_check(basic_health_check_model, conn_awaited).await;
+        let organization_id = Uuid::new_v4();
+        let id = insert_health_check(organization_id, basic_health_check_model, conn_awaited).await;
         id
     }
 
