@@ -4,17 +4,19 @@ use axum::{
     debug_handler,
     extract::{Path, State},
     http::StatusCode,
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use bb8::Pool;
 use bb8_postgres::PostgresConnectionManager;
 use db::insert_health_check;
-use model::HealthCheckModel;
 use std::net::SocketAddr;
 use std::str;
 use tokio_postgres::NoTls;
 use uuid::Uuid;
+
+use model::{HealthCheckModelGetResponse, InsertHealthCheckModelRequest};
 
 pub mod db;
 pub mod model;
@@ -43,8 +45,8 @@ struct Cli {
 async fn post_health_check(
     State(pool): State<ConnectionPool>,
     // DatabaseConnection(pool): DatabaseConnection,
-    Json(payload): Json<HealthCheckModel>,
-) -> Result<String, (StatusCode, String)> {
+    Json(payload): Json<InsertHealthCheckModelRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     let conn = pool.get_owned().await.map_err(internal_error)?;
 
     let id = insert_health_check(payload, conn).await;
@@ -60,9 +62,26 @@ async fn post_health_check(
 async fn get_health_check(
     Path(id): Path<Uuid>,
     DatabaseConnection(conn): DatabaseConnection,
-) -> Result<String, (StatusCode, String)> {
-    let health_check = get_health_check_by_id(id, conn).await.unwrap();
-    Ok(serde_json::to_string(&health_check).unwrap())
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let health_check = get_health_check_by_id(id, conn).await;
+    // Ok(serde_json::to_string(&health_check).unwrap())
+
+    let error = if health_check.is_none() {
+        Some(model::OpdayError {
+            error: "not_found".to_string(),
+            error_loc: "Not found.".to_string(),
+        })
+    } else {
+        None
+    };
+
+    let response = HealthCheckModelGetResponse {
+        success: health_check.is_some(),
+        model: health_check,
+        error,
+    };
+
+    Ok((StatusCode::OK, Json(response)))
 }
 
 #[tokio::main]
@@ -101,8 +120,10 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
+    use db::tests::{basic_health_check, basic_health_check_model};
     use http_body_util::BodyExt;
     use rstest::*;
+    use serde_json::Value;
     use tower::ServiceExt;
 
     #[rstest(
@@ -113,6 +134,7 @@ mod tests {
         assert!(Cli::try_parse_from(args).is_ok());
     }
 
+    #[rstest]
     #[tokio::test]
     async fn get_root() {
         let app = app().await;
@@ -128,6 +150,7 @@ mod tests {
         assert_eq!(&body[..], b"ok");
     }
 
+    #[rstest]
     #[tokio::test]
     async fn get_alive() {
         let app = app().await;
@@ -148,14 +171,11 @@ mod tests {
         assert_eq!(&body[..], b"ok");
     }
 
+    #[rstest]
     #[tokio::test]
-    async fn post_health_check() {
+    async fn post_health_check(basic_health_check_model: InsertHealthCheckModelRequest) {
         let app = app().await;
-
-        let model = HealthCheckModel {
-            name: "test".to_string(),
-        };
-
+        let model = basic_health_check_model;
         let request = Request::post("/api/v1/health-check")
             .header("Content-Type", "application/json")
             .body(Body::from(serde_json::to_string(&model).unwrap()));
@@ -163,13 +183,56 @@ mod tests {
         let response = app.oneshot(request.unwrap()).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-
-        use serde_json::Value;
-
         let body = response.into_body().collect().await.unwrap().to_bytes();
-        let res = str::from_utf8(&body).unwrap();
-        let v: Value = serde_json::from_str(&res).unwrap();
+        let body_str = str::from_utf8(&body).unwrap();
+        let json: Value = serde_json::from_str(&body_str).unwrap();
+        assert_eq!(json["success"], true);
+    }
 
-        assert_eq!(v["success"], true);
+    #[rstest]
+    #[tokio::test]
+    async fn get_health_check_existing(#[future] basic_health_check: Uuid) {
+        let app = app().await;
+        let basic_health_check_id = basic_health_check.await;
+        let request =
+            Request::get("/api/v1/health-check/".to_owned() + &basic_health_check_id.to_string())
+                .body(Body::from(""));
+
+        let response = app.oneshot(request.unwrap()).await.unwrap();
+
+        let response_status = response.status();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body_str = str::from_utf8(&body).unwrap();
+        assert_eq!(response_status, StatusCode::OK, "raw: {}", &body_str);
+        let response: HealthCheckModelGetResponse = serde_json::from_str(&body_str).unwrap();
+        assert!(response.success, "raw: {}", &body_str);
+        assert!(response.model.unwrap().name.len() > 0, "raw: {}", &body_str);
+        assert!(response.error.is_none(), "raw: {}", &body_str);
+    }
+
+    #[fixture]
+    fn not_existing_basic_health_check() -> Uuid {
+        Uuid::default()
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn get_health_check_not_existing(not_existing_basic_health_check: Uuid) {
+        let app = app().await;
+        let request = Request::get(
+            "/api/v1/health-check/".to_owned() + &not_existing_basic_health_check.to_string(),
+        )
+        .body(Body::from(""));
+
+        let response = app.oneshot(request.unwrap()).await.unwrap();
+
+        let response_status = response.status();
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body_str = str::from_utf8(&body).unwrap();
+        assert_eq!(response_status, StatusCode::OK, "raw: {}", &body_str);
+        let response: HealthCheckModelGetResponse = serde_json::from_str(&body_str).unwrap();
+        assert!(!response.success, "raw: {}", &body_str);
+        assert!(response.model.is_none(), "raw: {}", &body_str);
+        assert!(response.error.is_some(), "raw: {}", &body_str);
     }
 }

@@ -3,15 +3,12 @@ use axum::{
     extract::{FromRef, FromRequestParts},
     http::{request::Parts, StatusCode},
 };
-// use serde_derive::Deserialize;
 use bb8::{Pool, PooledConnection};
 use bb8_postgres::PostgresConnectionManager;
 use tokio_postgres::NoTls;
-
-#[allow(unused_imports)]
 use uuid::Uuid;
 
-use crate::model::HealthCheckModel;
+use crate::model::{HealthCheckModel, InsertHealthCheckModelRequest};
 
 pub type ConnectionPool = Pool<PostgresConnectionManager<NoTls>>;
 
@@ -51,7 +48,7 @@ pub async fn get_health_check_by_id(id: Uuid, conn: DbConn) -> Option<HealthChec
     })
 }
 
-pub async fn insert_health_check(model: HealthCheckModel, conn: DbConn) -> Uuid {
+pub async fn insert_health_check(model: InsertHealthCheckModelRequest, conn: DbConn) -> Uuid {
     let row = conn
         .query_one(
             "
@@ -68,7 +65,7 @@ pub async fn insert_health_check(model: HealthCheckModel, conn: DbConn) -> Uuid 
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use log::debug;
     use rstest::*;
@@ -95,12 +92,19 @@ mod tests {
     }
 
     #[fixture]
-    async fn basic_health_check(#[future] conn: DbConn) -> Uuid {
-        let conn_awaited = conn.await;
-        let model = HealthCheckModel {
+    pub fn basic_health_check_model() -> InsertHealthCheckModelRequest {
+        InsertHealthCheckModelRequest {
             name: "test".to_string(),
-        };
-        let id = insert_health_check(model, conn_awaited).await;
+        }
+    }
+
+    #[fixture]
+    pub async fn basic_health_check(
+        basic_health_check_model: InsertHealthCheckModelRequest,
+        #[future] conn: DbConn,
+    ) -> Uuid {
+        let conn_awaited = conn.await;
+        let id = insert_health_check(basic_health_check_model, conn_awaited).await;
         id
     }
 

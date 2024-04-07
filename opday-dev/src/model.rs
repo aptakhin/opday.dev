@@ -19,6 +19,19 @@ pub struct HealthCheckModel {
     pub name: String,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct HealthCheckModelGetResponse {
+    pub success: bool,
+
+    pub model: Option<HealthCheckModel>,
+    pub error: Option<OpdayError>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct InsertHealthCheckModelRequest {
+    pub name: String,
+}
+
 // #[derive(Serialize, Deserialize)]
 pub struct InsertedHealthCheckModel {
     pub id: Uuid,
