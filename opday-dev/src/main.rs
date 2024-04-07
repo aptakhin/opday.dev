@@ -1,74 +1,65 @@
 use clap::Parser;
 
-
-use std::sync::{Arc, Mutex};
+use axum::{
+    routing::{get, post},
+    Json,
+    Router,
+    async_trait,
+    extract::{FromRef, FromRequestParts},
+    http::{request::Parts, StatusCode},
+};
+use serde::{Deserialize, Serialize};
+use bb8::{Pool, PooledConnection};
+use bb8_postgres::PostgresConnectionManager;
+use tokio_postgres::NoTls;
+use std::{net::SocketAddr};
 use tokio::net::TcpListener;
-use tokio_postgres::{Client, Error, NoTls};
 use uuid::Uuid;
+use tokio_postgres::Error;
 
 use log::debug;
 
-use serde_derive::{Deserialize, Serialize};
-use std::collections::HashMap;
-// use serde::{Deserialize, Serialize}; // Add this line
-use warp::{
-    http::{Response, StatusCode},
-    Filter,
-};
-
-#[derive(Deserialize, Serialize)]
-struct MyObject {
-    key1: String,
-    key2: u32,
+// basic handler that responds with a static string
+async fn root() -> &'static str {
+    "Hello, World!"
 }
 
-type DbClient = Arc<Mutex<Client>>;
+// async fn create_user(
+//     // this argument tells axum to parse the request body
+//     // as JSON into a `CreateUser` type
+//     Json(payload): Json<CreateUserRequest>,
+// ) -> (StatusCode, Json<CreateUserResponse>) {
+//     // insert your application logic here
+//     let user = CreateUserResponse {
+//         id: 1337,
+//         username: payload.username,
+//     };
 
-async fn query(db: DbClient) -> Result<(), Error> {
-    let db = db.lock().unwrap();
-    let rows = db.query("SELECT * FROM health_check", &[]).await?;
-
-    let value: &str = rows[0].get("name");
-
-    Ok(())
-}
-
-// async fn hello(
-//     req: Request<hyper::body::Incoming>,
-//     db: DbClient,
-// ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
-//     // query(db).await.unwrap();
-
-//     debug!("Query {}", req.uri().path());
-
-//     match req.uri().path() {
-//         // "/health" => {
-//         //     let response = Response<BoxBody<Bytes, hyper::Error>>::builder()
-//         //         .status(200)
-//         //         .body(())
-//         //         .unwrap();
-
-//         //     Ok(response)
-//         // }
-//         _ => {
-//             let response = Response<BoxBody<Bytes, hyper::Error>>::builder()
-//                 .status(404)
-//                 .body(())
-//                 .unwrap();
-
-//             Ok(response)
-//         }
-//     }
-
-    // Ok(Response::new(Full::new(Bytes::from("Hello, World!"))))
-
-    // let response = Response::builder()
-    //     .status(200)
-    //     .body(())
-    //     .unwrap();
-
-    // Ok(response)
+//     // this will be converted into a JSON response
+//     // with a status code of `201 Created`
+//     (StatusCode::CREATED, Json(user))
 // }
+
+// #[derive(Deserialize)]
+// struct CreateUserRequest {
+//     username: String,
+// }
+
+// #[derive(Serialize)]
+// struct CreateUserResponse {
+//     id: u64,
+//     username: String,
+// }
+
+// async fn query(db: DbClient) -> Result<(), Error> {
+//     let db = db.lock().unwrap();
+//     let rows = db.query("SELECT * FROM health_check", &[]).await?;
+
+//     let value: &str = rows[0].get("name");
+
+//     Ok(())
+// }
+
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -82,73 +73,72 @@ struct Cli {
     port: u16,
 }
 
+type ConnectionPool = Pool<PostgresConnectionManager<NoTls>>;
+
+struct DatabaseConnection(PooledConnection<'static, PostgresConnectionManager<NoTls>>);
+
+#[async_trait]
+impl<S> FromRequestParts<S> for DatabaseConnection
+where
+    ConnectionPool: FromRef<S>,
+    S: Send + Sync,
+{
+    type Rejection = (StatusCode, String);
+
+    async fn from_request_parts(_parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let pool = ConnectionPool::from_ref(state);
+
+        let conn = pool.get_owned().await.map_err(internal_error)?;
+
+        Ok(Self(conn))
+    }
+}
+
+async fn using_connection_extractor(
+    DatabaseConnection(conn): DatabaseConnection,
+) -> Result<String, (StatusCode, String)> {
+    let rows = conn
+        .query("SELECT * FROM health_check", &[])
+        .await
+        .map_err(internal_error)?;
+    let value: &str = rows[0].get("name");
+
+    Ok(value.to_string())
+}
+
+fn internal_error<E>(err: E) -> (StatusCode, String)
+where
+    E: std::error::Error,
+{
+    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
 
     env_logger::init();
 
-    // let addr = SocketAddr::from(([127, 0, 0, 1], cli.port));
-    // debug!("Listening on: {}", addr);
-
     let database_dsn =
         std::env::var("DATABASE_DSN").expect("Failed to parse DATABASE_DSN environment variable");
 
-    let Ok((client, connection)) = tokio_postgres::connect(&database_dsn, NoTls).await else { todo!() };
+    let addr = SocketAddr::from(([127, 0, 0, 1], cli.port));
 
-    let client = Arc::new(Mutex::new(client));
+    debug!("Listening on: {}", addr);
 
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
-        }
-    });
+    let manager =
+        PostgresConnectionManager::new_from_stringlike(&database_dsn, NoTls)
+            .unwrap();
+    let pool = Pool::builder().build(manager).await.unwrap();
 
-    let example1 = warp::get()
-        .and(warp::path("example1"))
-        .and(warp::query::<HashMap<String, String>>())
-        .map(|p: HashMap<String, String>| match p.get("key") {
-            Some(key) => Response::builder().body(format!("key = {}", key)),
-            None => Response::builder().body(String::from("No \"key\" param in query.")),
-        });
+    let app = Router::new()
+        .route("/", get(root))
+        .route("/hello", get(using_connection_extractor))
+        .with_state(pool);
 
-    let example2 = warp::get()
-        .and(warp::path("example2"))
-        .and(warp::query::<MyObject>())
-        .map(|p: MyObject| {
-            Response::builder().body(format!("key1 = {}, key2 = {}", p.key1, p.key2))
-        });
+    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    axum::serve(listener, app).await.unwrap();
 
-    warp::serve(example1.or(example2))
-        .run(([127, 0, 0, 1], cli.port))
-        .await
-
-    // let listener = TcpListener::bind(addr).await?;
-
-    // loop {
-    //     let (stream, _) = listener.accept().await?;
-
-    //     let io = TokioIo::new(stream);
-
-    //     let client = client.clone();
-
-    //     tokio::task::spawn_blocking(move || {
-    //         tokio::runtime::Handle::current().block_on(async {
-    //             if let Err(err) = http1::Builder::new()
-    //                 .serve_connection(
-    //                     io,
-    //                     service_fn(move |_req| {
-    //                         let client = Arc::clone(&client);
-    //                         async { hello(_req, client).await }
-    //                     }),
-    //                 )
-    //                 .await
-    //             {
-    //                 println!("Error serving connection: {:?}", err);
-    //             }
-    //         })
-    //     });
-    // }
 }
 
 #[cfg(test)]
@@ -165,48 +155,43 @@ mod tests {
     }
 
     #[fixture]
-    async fn db() -> DbClient {
+    async fn db() -> ConnectionPool {
         let database_dsn = std::env::var("DATABASE_DSN")
             .expect("Failed to parse DATABASE_DSN environment variable");
 
-        let (client, connection) = tokio_postgres::connect(&database_dsn, NoTls).await.unwrap();
+        let manager =
+            PostgresConnectionManager::new_from_stringlike(&database_dsn, NoTls)
+                .unwrap();
+        let pool = Pool::builder().build(manager).await.unwrap();
 
-        let client = Arc::new(Mutex::new(client));
-
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("connection error: {}", e);
-            }
-        });
-
-        client
+        pool
     }
 
     #[fixture]
-    async fn basic_health_check(#[future] db: DbClient) -> Result<Uuid, Error> {
+    async fn basic_health_check(#[future] db: ConnectionPool) -> Uuid {
         let db_awaited = db.await;
-        let db = db_awaited.lock().unwrap();
-        let rows = db
+        let conn = db_awaited.get_owned().await.map_err(internal_error).expect("REASON");
+        let rows = conn
             .query("INSERT INTO health_check
             (organization_id, name, url, expected_status_code) VALUES ($1, $2, $3, $4) RETURNING (id)", &[&Uuid::new_v4(), &"test", &"http://...", &200])
-            .await?;
+            .await.expect("REASON");
         assert_eq!(rows.len(), 1);
         let id_str: Uuid = rows[0].get(0);
-        Ok(id_str)
+        id_str
     }
 
     #[tokio::main]
     #[rstest]
     async fn test_query_health_check(
-        #[future] db: DbClient,
-        #[future] basic_health_check: Result<Uuid, Error>,
+        #[future] db: ConnectionPool,
+        #[future] basic_health_check: Uuid,
     ) -> Result<(), Error> {
         env_logger::init();
 
         let db_awaited = db.await;
-        let health_check_id = basic_health_check.await?;
-        let db = db_awaited.lock().unwrap();
-        let rows = db
+        let conn = db_awaited.get_owned().await.map_err(internal_error).expect("REASON");
+        let health_check_id = basic_health_check.await;
+        let rows = conn
             .query(
                 "SELECT * FROM health_check WHERE id=$1",
                 &[&health_check_id],
