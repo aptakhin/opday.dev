@@ -1,14 +1,6 @@
 use clap::Parser;
 
-use std::convert::Infallible;
-use std::net::SocketAddr;
 
-use http_body_util::Full;
-use hyper::body::Bytes;
-use hyper::server::conn::http1;
-use hyper::service::service_fn;
-use hyper::{Request, Response};
-use hyper_util::rt::TokioIo;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tokio_postgres::{Client, Error, NoTls};
@@ -16,26 +8,67 @@ use uuid::Uuid;
 
 use log::debug;
 
+use serde_derive::{Deserialize, Serialize};
+use std::collections::HashMap;
+// use serde::{Deserialize, Serialize}; // Add this line
+use warp::{
+    http::{Response, StatusCode},
+    Filter,
+};
+
+#[derive(Deserialize, Serialize)]
+struct MyObject {
+    key1: String,
+    key2: u32,
+}
+
 type DbClient = Arc<Mutex<Client>>;
 
 async fn query(db: DbClient) -> Result<(), Error> {
     let db = db.lock().unwrap();
     let rows = db.query("SELECT * FROM health_check", &[]).await?;
 
-    // let value: &str = rows[0].get(0);
-    // assert_eq!(value, "hello world");
+    let value: &str = rows[0].get("name");
 
     Ok(())
 }
 
-async fn hello(
-    _: Request<hyper::body::Incoming>,
-    db: DbClient,
-) -> Result<Response<Full<Bytes>>, Infallible> {
-    query(db).await.unwrap();
+// async fn hello(
+//     req: Request<hyper::body::Incoming>,
+//     db: DbClient,
+// ) -> Result<Response<BoxBody<Bytes, hyper::Error>>, Infallible> {
+//     // query(db).await.unwrap();
 
-    Ok(Response::new(Full::new(Bytes::from("Hello, World!"))))
-}
+//     debug!("Query {}", req.uri().path());
+
+//     match req.uri().path() {
+//         // "/health" => {
+//         //     let response = Response<BoxBody<Bytes, hyper::Error>>::builder()
+//         //         .status(200)
+//         //         .body(())
+//         //         .unwrap();
+
+//         //     Ok(response)
+//         // }
+//         _ => {
+//             let response = Response<BoxBody<Bytes, hyper::Error>>::builder()
+//                 .status(404)
+//                 .body(())
+//                 .unwrap();
+
+//             Ok(response)
+//         }
+//     }
+
+    // Ok(Response::new(Full::new(Bytes::from("Hello, World!"))))
+
+    // let response = Response::builder()
+    //     .status(200)
+    //     .body(())
+    //     .unwrap();
+
+    // Ok(response)
+// }
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -50,18 +83,18 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() {
     let cli = Cli::parse();
 
     env_logger::init();
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], cli.port));
-    debug!("Listening on: {}", addr);
+    // let addr = SocketAddr::from(([127, 0, 0, 1], cli.port));
+    // debug!("Listening on: {}", addr);
 
     let database_dsn =
         std::env::var("DATABASE_DSN").expect("Failed to parse DATABASE_DSN environment variable");
 
-    let (client, connection) = tokio_postgres::connect(&database_dsn, NoTls).await?;
+    let Ok((client, connection)) = tokio_postgres::connect(&database_dsn, NoTls).await else { todo!() };
 
     let client = Arc::new(Mutex::new(client));
 
@@ -71,32 +104,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
 
-    let listener = TcpListener::bind(addr).await?;
-
-    loop {
-        let (stream, _) = listener.accept().await?;
-
-        let io = TokioIo::new(stream);
-
-        let client = client.clone();
-
-        tokio::task::spawn_blocking(move || {
-            tokio::runtime::Handle::current().block_on(async {
-                if let Err(err) = http1::Builder::new()
-                    .serve_connection(
-                        io,
-                        service_fn(move |_req| {
-                            let client = Arc::clone(&client);
-                            async { hello(_req, client).await }
-                        }),
-                    )
-                    .await
-                {
-                    println!("Error serving connection: {:?}", err);
-                }
-            })
+    let example1 = warp::get()
+        .and(warp::path("example1"))
+        .and(warp::query::<HashMap<String, String>>())
+        .map(|p: HashMap<String, String>| match p.get("key") {
+            Some(key) => Response::builder().body(format!("key = {}", key)),
+            None => Response::builder().body(String::from("No \"key\" param in query.")),
         });
-    }
+
+    let example2 = warp::get()
+        .and(warp::path("example2"))
+        .and(warp::query::<MyObject>())
+        .map(|p: MyObject| {
+            Response::builder().body(format!("key1 = {}, key2 = {}", p.key1, p.key2))
+        });
+
+    warp::serve(example1.or(example2))
+        .run(([127, 0, 0, 1], cli.port))
+        .await
+
+    // let listener = TcpListener::bind(addr).await?;
+
+    // loop {
+    //     let (stream, _) = listener.accept().await?;
+
+    //     let io = TokioIo::new(stream);
+
+    //     let client = client.clone();
+
+    //     tokio::task::spawn_blocking(move || {
+    //         tokio::runtime::Handle::current().block_on(async {
+    //             if let Err(err) = http1::Builder::new()
+    //                 .serve_connection(
+    //                     io,
+    //                     service_fn(move |_req| {
+    //                         let client = Arc::clone(&client);
+    //                         async { hello(_req, client).await }
+    //                     }),
+    //                 )
+    //                 .await
+    //             {
+    //                 println!("Error serving connection: {:?}", err);
+    //             }
+    //         })
+    //     });
+    // }
 }
 
 #[cfg(test)]
