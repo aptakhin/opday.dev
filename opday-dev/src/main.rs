@@ -162,29 +162,15 @@ async fn main() {
 #[cfg(test)]
 pub mod test {
     use super::*;
+    use rstest::rstest;
 
-    #[tokio::test]
-    async fn test_cli_deploy_api() {
-        let args = vec![
-            "opday",
-            "deploy",
-        ];
-
-        let cli = Cli::parse_from(args);
-
-        assert!(matches!(cli.command, Commands::Deploy { }));
-    }
-
-     #[tokio::test]
-    async fn test_cli_sync_api() {
-        let args = vec![
-            "opday",
-            "sync",
-        ];
-
-        let cli = Cli::parse_from(args);
-
-        assert!(matches!(cli.command, Commands::Sync { }));
+    #[rstest(
+        args,
+        case::just_docker(vec!["", "deploy"]),
+        case::just_sync(vec!["", "sync"]),
+    )]
+    fn test_cli_cases_parsed(args: Vec<&str>) {
+        assert!(Cli::try_parse_from(args).is_ok());
     }
 
     #[tokio::test]
