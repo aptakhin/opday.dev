@@ -7,9 +7,9 @@ test::
 build::
 	cargo build --manifest-path opday-dev/Cargo.toml
 
-rund::
-	RUST_LOG=debug RUST_BACKTRACE=1 DATABASE_DSN=postgresql://postgres:postgres@localhost:5432/postgres \
-	  cargo run --manifest-path opday-dev/Cargo.toml -- --port 3003
+run::
+	RUST_LOG=debug RUST_BACKTRACE=1 OPDAY_SECRET_KEY=1 \
+	  cargo run --manifest-path opday-dev/Cargo.toml
 
 fmt::
 	(cd opday-dev && cargo fmt)

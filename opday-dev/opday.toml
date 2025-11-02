@@ -1,0 +1,4 @@
+just_ssh_key_path = ""
+just_hosts = [
+    "root@46.101.98.131",
+]

@@ -12,9 +12,11 @@ impl Settings {
             .unwrap_or_default()
             .parse()
             .unwrap_or(false);
-        let secret_key =
-            env::var("OPDAY_SECRET_KEY").expect("OPDAY_SECRET_KEY is expected for the run");
-        let postgres_dsn = Self::build_postgres_dsn();
+        // let secret_key =
+        //     env::var("OPDAY_SECRET_KEY").expect("OPDAY_SECRET_KEY is expected for the run");
+        let secret_key = "opday_dev_secret_key".to_string();
+        // let postgres_dsn = Self::build_postgres_dsn();
+        let postgres_dsn = "".to_string();
         Settings {
             local_run,
             secret_key,

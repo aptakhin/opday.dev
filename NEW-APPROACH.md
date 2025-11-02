@@ -1,130 +1,55 @@
+# Easy approach
+
+
+```toml
+echo > opday.toml << EOF
+just_ssh_key_path = ""
+just_hosts = [
+    "root@193.184.216.449"
+]
+EOF
+```
+# Open only ports 80, 443
+
+
+Execute. Every secret stays locally, not uploaded anywhere:
+
+```bash
+opday build-push-deploy
+```
+
+Extend container registry
+
+```toml
+echo > opday.toml << EOF
+just_cr_credentials_path = ""
+just_ssh_key_path = ""
+just_hosts = [
+    "root@193.184.216.449"
+]
+EOF
+```
+
 Declarative *with a few exclusions
 Extensible.
 
 State, diff-state, apply.
 
 
+
+
 Commands can go trough service. Pull. You can click state and deploy.
 Monitor.
 
-
-
 Just manually push.
 
-
-[dev.opday.project]
-project = "xx"
-
-runner = "dev.opday.docker"
-orchestrator = "dev.opday.orch1"
-
-[dev.opday]
-plugins = [
-    "fbff"
-]
-
-pull = true
-host = "https://opday.cloud"
-env_file = [
-    ".env",
-]
-
-[[dev.opday.service]]
-name = "aaa.prod"
-service = "backend"  ## from docker compose
-hosts = [
-    "root@aaa"
-]
-
-instances = [
-    "aaa:8000"
-]
-
-
-[dev.opday.orch1]
-ingress = "nginx"
-services = [
-    "nginx",
-]
-params = [
-    "dev.opday.orch1.backends=aaa.prod",
-]
-
-
-
-Or
-
-
-[dev.opday.project]
-project = "xx"
-(enironment = "yy")
-
-runner = "dev.opday.docker"
-orchestrator = "dev.opday.orch1"
-
-
-state_path = "file"
-
-[dev.opday.agent]
-host = "https://xxx"
-data_dir = "" # fdb data
-
-[dev.opday.runner]
-registry = ""
-credentials_path = ""
-
-[dev.opday.orch1]
-ingress = "nginx"
-
-[group]
-type = "group"
-private_key_path = ""
-user_name = "opdev"
-
-[group.aaa-dev]
-type = "group"
-hosts = [
-    "aaa-dev"
-]
-
-[group.aaa-prod]
-type = "group"
-hosts = [
-    "aaa-prod1",
-    "aaa-prod2",
-]
-
-[aaa]
-type = "service"
-name = "aaa"
-
-[aaa.dev]
-env = "dev"
-group = "group.aaa-dev"
-
-instances = [
-    "aaa-dev:8000",
-]
-
-[aaa.prod]
-env = "prod"
-group = "group.aaa-prod"
-params = [
-    "dev.opday.docker.image=xxx",
-]
-instances = [
-    "aaa-prod1:8000",
-    "aaa-prod1:8001",
-    "aaa-prod2:8001",
-]
 curl ".../install.sh" | sh
 
 # TODO: add creds
-opday plan
 opday sync
 # or???
 opday deploy
-opday deploy --service aaa --env prod -p "dev.opday.docker.image=xxx"
+opday deploy --service aaa --env prod -p "opday.dev/docker.image=xxx"
 .env:
 OPDAY_BASIC_AUTH="dfdfdff"
 
@@ -152,22 +77,76 @@ services:
     - "443:443"
     deploy:
       labels:
-        dev.opday.image-tag: "$NGINX_TAG"
-        dev.opday.runner: "dev.opday.docker"
-        dev.opday.orchestrator: "dev.opday.orch1"
-        dev.opday.backends.main: "opday-backends"
+        opday.dev/image-tag: "$NGINX_TAG"
+        opday.dev/runner: "my-docker"
+        opday.dev/orchestrator: "my-orchestrator"
+        opday.dev/backends: "my-backends"
 
   backend:
     image: registry.digitalocean.com/frlr/opday-dev/backend:$BACKEND_TAG
     build: '!reset null'
-    command: opday-dev -p 3003
+    command: opday -p 3003
     restart: unless-stopped
     ports:
     - 3003:3003
     deploy:
       labels:
-        dev.opday.image-tag: "$BACKEND_TAG"
-        dev.opday.runner: "dev.opday.docker"
-        dev.opday.orchestrator: "dev.opday.orch1"
-        dev.opday.group: "opday-backends"
+        opday.dev/image-tag: "$BACKEND_TAG"
+        opday.dev/runner: "my-docker"
+        opday.dev/orchestrator: "my-orchestrator"
+        opday.dev/group: "my-group"
 ```
+
+
+
+```bash
+opday -c opday.toml
+
+opday sync --plan # make a plan
+opday build backend -t 277155 --push
+opday deploy backend --env prod -t 277155
+opday agent serve --port 26166
+```
+
+
+# version 333
+
+```toml
+[main]
+type = "opday.dev/project"
+project = "xx"
+(enironment = "yy")
+
+runner = "my-docker"
+orchestrator = "my-orchestrator"
+
+[my-docker]
+type = "opday.dev/docker"
+registry = ""
+credentials_path = ""
+
+[my-orchestrator]
+type = "opday.dev/orch1"
+ingress = "nginx"
+
+[my-group]
+type = "opday.dev/group"
+private_key_path = ""
+user_name = "opdev"
+
+rules = [
+    "vnet",
+    "ports"
+]
+
+[vnet]
+type = "opday.dev/ansible"
+# setup vnet
+
+[ssh]
+type = "opday.dev/ansible"
+# setup ssh
+```
+
+
+
