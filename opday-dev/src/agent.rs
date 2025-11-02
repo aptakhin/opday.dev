@@ -3,48 +3,17 @@
 use axum::{
     async_trait,
     body::Bytes,
-    extract::{Form, FromRequest, Request, State},
-    http::StatusCode,
-    response::{Html, IntoResponse, Redirect, Response},
+    extract::{FromRequest, Request},
+    response::{Html, IntoResponse, Response},
     routing::get,
-    routing::post,
-    Json, Router,
+    Router,
 };
-use axum_extra::extract::cookie::{Cookie, CookieJar};
-use axum_extra::{
-    headers::authorization::{Authorization, Bearer},
-    TypedHeader,
-};
-use std::env;
-use tower_http::services::{ServeDir, ServeFile};
-use tracing::{debug, info, warn};
+use tracing::{warn};
 
 use minijinja::{context, path_loader, Environment};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use std::net::SocketAddr;
 use std::time::Duration;
-use tokio::net::TcpListener;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use uuid::Uuid;
-
-use crate::auth;
-use crate::settings;
-
-use crate::auth::{
-    ensure_push_header_authentification,
-    Account,
-    AccountActionOnTenant,
-    AccountRepository,
-    ApiAuth,
-    ApiAuthRepository,
-    // Authentificated,
-    PushApiAuth,
-    PushApiAuthRepository,
-    // ensure_header_authentification
-};
 use crate::settings::Settings;
 
 type DbPool = PgPool;
@@ -60,79 +29,13 @@ async fn make_db() -> DbPool {
 }
 
 async fn get_root() -> Html<String> {
-    let mut env = Environment::new();
-    env.set_loader(path_loader("static/templates"));
-    let tmpl = env.get_template("index.html.j2").unwrap();
-    Html(tmpl.render(context!(name => "John")).unwrap())
+    // let mut env = Environment::new();
+    // env.set_loader(path_loader("static/templates"));
+    // let tmpl = env.get_template("index.html.j2").unwrap();
+    // Html(tmpl.render(context!(name => "John")).unwrap())
+    Html("<h1>Welcome to Opday Agent</h1>".to_string())
 }
 
-async fn get_signin() -> Html<String> {
-    let mut env = Environment::new();
-    env.set_loader(path_loader("static/templates"));
-    let tmpl = env.get_template("signin.html.j2").unwrap();
-    Html(tmpl.render(context!(name => "John")).unwrap())
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Signin {
-    pub email: String,
-    pub password: String,
-}
-
-#[derive()]
-pub enum HtmlOrRedirect {
-    Html(Html<String>),
-    Redirect(Redirect),
-}
-
-impl IntoResponse for HtmlOrRedirect {
-    fn into_response(self) -> Response {
-        match self {
-            HtmlOrRedirect::Html(html) => html.into_response(),
-            HtmlOrRedirect::Redirect(redirect) => redirect.into_response(),
-        }
-    }
-}
-
-async fn post_signin(
-    jar: CookieJar,
-    State(pool): State<DbPool>,
-    Form(signin_form): Form<Signin>,
-) -> Result<(CookieJar, Redirect), Html<String>> {
-    let account_repository = AccountRepository { pool: &pool };
-    // let signin_response = Account::new(&account_repository)
-    //     .signin(signin_form.email, signin_form.password)
-    //     .await;
-
-    // debug!("Log1 {:?}", signin_response);
-
-    // if signin_response.is_err() {
-    //     let mut env = Environment::new();
-    //     env.set_loader(path_loader("static/templates"));
-    //     let tmpl = env.get_template("signin.html.j2").unwrap();
-    //     return Err(Html(tmpl.render(context!(name => "John")).unwrap()));
-    // }
-
-    // let api_auth_repository = ApiAuthRepository { pool: &pool };
-    // let auth_token = ApiAuth::create_new(signin_response.unwrap(), &api_auth_repository).await;
-
-    // debug!("Log2 {:?}", auth_token);
-
-    // if auth_token.is_err() {
-    //     // Internal error
-    //     let mut env = Environment::new();
-    //     env.set_loader(path_loader("static/templates"));
-    //     let tmpl = env.get_template("signin.html.j2").unwrap();
-    //     return Err(Html(tmpl.render(context!(name => "John")).unwrap()));
-    // }
-
-    // let token = auth_token.unwrap().token;
-
-    Ok((
-        jar.add(Cookie::new("_s".to_string(), "aaa")),
-        Redirect::to("/dashboard"),
-    ))
-}
 
 struct BufferRequestBody(Bytes);
 
@@ -153,12 +56,11 @@ where
 }
 
 pub async fn routes_app() -> Router<()> {
-    let pool = make_db().await;
+    // let pool = make_db().await;
 
     let router: Router<()> = Router::new()
-        .route("/", get(get_root))
-        .route("/api/signin", get(get_signin).post(post_signin))
-        .with_state(pool);
+        .route("/", get(get_root));
+        // .with_state(pool);
 
     router
 }

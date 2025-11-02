@@ -2,21 +2,14 @@
 
 use tracing::{debug, info, warn};
 use std::net::SocketAddr;
-use std::time::Duration;
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use sqlx::postgres::{PgPool, PgPoolOptions};
-use std::env;
 use clap::{Parser, Subcommand};
 use std::fs;
 use serde_derive::Deserialize;
-use uuid::Uuid;
 
-mod auth;
 mod settings;
 mod agent;
-
-type DbPool = PgPool;
 
 fn init_logging() {
     use crate::settings::Settings;
@@ -82,6 +75,8 @@ enum Commands {
         #[command(subcommand)]
         command: AgentCommands,
     },
+    Sync {
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -92,7 +87,7 @@ enum AgentCommands {
         #[arg(short, long, default_value_t = 8000)]
         port: u16,
         /// Host address
-        #[arg(short, long, default_value = "127.0.0.1")]
+        #[arg(long, default_value = "127.0.0.1")]
         host: String,
         /// Show detailed information
         #[arg(short, long)]
@@ -101,7 +96,7 @@ enum AgentCommands {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Sett {
+pub struct Config {
     #[serde(default)]
     pub just_hosts: Option<Vec<String>>,
 
@@ -131,10 +126,10 @@ async fn main() {
     let config_str = fs::read_to_string(config_path)
         .expect("Failed to read configuration file");
 
-    let settings: Sett = toml::from_str(&config_str)
+    let config: Config = toml::from_str(&config_str)
         .expect("Failed to parse TOML configuration");
 
-    debug!("Debug {:#?}", settings);
+    debug!("Debug {:#?}", config);
 
     match &cli.command {
         Commands::Deploy { } => {
@@ -142,7 +137,7 @@ async fn main() {
         }
         Commands::Agent { command } => {
             match command {
-                AgentCommands::Serve { port, host, verbose } => {
+                AgentCommands::Serve { port, host, .. } => {
                     // info!("Creating agent {} of type {}", name, agent_type);
                     let addr = format!("{}:{}", host, port);
                     let listener = TcpListener::bind(&addr).await.unwrap();
@@ -158,6 +153,9 @@ async fn main() {
                 }
             }
         }
+        Commands::Sync { } => {
+            info!("Running sync");
+        }
     }
 }
 
@@ -165,4 +163,67 @@ async fn main() {
 pub mod test {
     use super::*;
 
+    #[tokio::test]
+    async fn test_cli_deploy_api() {
+        let args = vec![
+            "opday",
+            "deploy",
+        ];
+
+        let cli = Cli::parse_from(args);
+
+        assert!(matches!(cli.command, Commands::Deploy { }));
+    }
+
+     #[tokio::test]
+    async fn test_cli_sync_api() {
+        let args = vec![
+            "opday",
+            "sync",
+        ];
+
+        let cli = Cli::parse_from(args);
+
+        assert!(matches!(cli.command, Commands::Sync { }));
+    }
+
+    #[tokio::test]
+    async fn test_cli_serve_api() {
+        let args = vec![
+            "opday",
+            "--verbose",
+            "agent",
+            "serve",
+            "--port",
+            "8080",
+            "--host",
+            "127.0.0.1",
+        ];
+
+        let cli = Cli::parse_from(args);
+
+        assert_eq!(cli.verbose, 1);
+        assert!(matches!(cli.command, Commands::Agent { command: AgentCommands::Serve { port, ref host, .. } }));
+        if let Commands::Agent { command } = cli.command {
+            if let AgentCommands::Serve { port, ref host, .. } = command {
+                assert_eq!(port, 8080);
+                assert_eq!(host, "127.0.0.1");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_config_parsing() {
+        let toml_str = r#"
+            just_hosts = ["host1", "host2"]
+            just_ssh_key_path = "/path/to/ssh/key"
+            just_cr_credentials_path = "/path/to/cr/credentials"
+        "#;
+
+        let config: Config = toml::from_str(toml_str).expect("Failed to parse TOML configuration");
+
+        assert_eq!(config.just_hosts.unwrap(), vec!["host1", "host2"]);
+        assert_eq!(config.just_ssh_key_path.unwrap(), "/path/to/ssh/key");
+        assert_eq!(config.just_cr_credentials_path.unwrap(), "/path/to/cr/credentials");
+    }
 }
