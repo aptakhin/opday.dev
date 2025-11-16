@@ -1,4 +1,10 @@
-# Easy approach
+# opday.dev
+
+Deployments and ops operations made not vendor-locked.
+
+# Easy approach (*)
+* Still requires VM-machine ready, because we don't provide one (but why)?
+* Spot machine maybe
 
 
 ```toml
