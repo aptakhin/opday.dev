@@ -123,9 +123,6 @@ type = "opday.dev/project"
 project = "xx"
 (enironment = "yy")
 
-runner = "my-docker"
-orchestrator = "my-orchestrator"
-
 [my-docker]
 type = "opday.dev/docker"
 registry = ""
@@ -146,11 +143,50 @@ rules = [
 ]
 
 [vnet]
-type = "opday.dev/ansible"
+type = "opday.dev/ansible-vnet"
 # setup vnet
 
-[ssh]
-type = "opday.dev/ansible"
+[ports]
+type = "opday.dev/ansible-ports"
+# setup ssh
+```
+
+
+
+
+```toml
+[opday.dev/project]
+project = "xx"
+(enironment = "yy")
+
+[opday.dev/docker]
+registry = ""
+credentials_path = ""
+
+[opday.dev/orch1]
+ingress = "nginx"
+
+[[opday.dev/service]]
+name = "aaa"
+
+[[opday.dev/service]]
+name = "bbb"
+
+[opday.dev/group]
+private_key_path = ""
+user_name = "opdev"
+
+rules = [
+    "vnet",
+    "ports"
+]
+
+[vnet]
+type = "opday.dev/ansible-vnet"
+# setup vnet
+
+[ports]
+type = "opday.dev/ansible-ports"
 # setup ssh
 ```
 

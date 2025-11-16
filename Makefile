@@ -1,8 +1,8 @@
 testw::
-	(cd opday && RUST_LOG=debug RUST_BACKTRACE=1 DATABASE_DSN=postgresql://postgres:postgres@localhost:5432/postgres cargo watch -x test)
+	(cd opday && RUST_LOG=debug RUST_BACKTRACE=1 cargo watch -x 'cargo test --show-output')
 
 test::
-	RUST_LOG=debug RUST_BACKTRACE=1 DATABASE_DSN=postgresql://postgres:postgres@localhost:5432/postgres cargo test --verbose --manifest-path opday-dev/Cargo.toml
+	RUST_LOG=debug RUST_BACKTRACE=1 cargo test --verbose --manifest-path opday-dev/Cargo.toml
 
 build::
 	cargo build --manifest-path opday/Cargo.toml

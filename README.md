@@ -2,7 +2,7 @@
 
 Deployments and ops operations made not vendor-locked.
 
-# Easy approach (*)
+## Easy approach (*)
 * Still requires VM-machine ready, because we don't provide one
 
 
@@ -30,7 +30,7 @@ Execute. Every secret stays locally, not uploaded anywhere:
 opday sync
 ```
 
-Extend container registry
+## Extend with container registry and custom private key
 
 ```toml
 echo > opday.toml << EOF
